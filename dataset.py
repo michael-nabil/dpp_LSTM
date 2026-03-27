@@ -6,27 +6,20 @@ from torch.utils.data.sampler import SubsetRandomSampler
 
 class VideoSummarizationDataset(Dataset):
     def __init__(self, h5_file_path):
-        """
-        Args:
-            h5_file_path (str): Path to the Kaggle .h5 dataset file.
-        """
         self.h5_file = h5py.File(h5_file_path, 'r')
-        
-        # The original dataset stores the video indices in an array called 'idx'
-        # e.g., [1, 2, 3, ..., 25] for SumMe
-        self.video_indices = self.h5_file['idx'][...]
+        # The Kaggle dataset uses 'video_1', 'video_2', etc. as main keys
+        self.video_keys = list(self.h5_file.keys())
         
     def __len__(self):
-        return len(self.video_indices)
+        return len(self.video_keys)
 
     def __getitem__(self, idx):
-        # h5py keys are strings, and the video indices usually start at 1
-        video_id = str(self.video_indices[idx])
+        video_id = self.video_keys[idx]
         
-        # Extract the arrays using the original author's naming convention
-        features = self.h5_file[f'fea_{video_id}'][...]
-        gt_score = self.h5_file[f'gt_1_{video_id}'][...]
-        gt_summary = self.h5_file[f'gt_2_{video_id}'][...]
+        # Extract using the Kaggle dataset's specific naming convention
+        features = self.h5_file[video_id]['features'][...]
+        gt_score = self.h5_file[video_id]['gtscore'][...]
+        gt_summary = self.h5_file[video_id]['gtsummary'][...]
         
         # Convert to PyTorch tensors
         features = torch.tensor(features, dtype=torch.float32)
@@ -43,7 +36,7 @@ def get_dataloaders(h5_file_path, batch_size=1, test_split=0.2, random_seed=42):
     dataset_size = len(dataset)
     indices = list(range(dataset_size))
     split = int(np.floor(test_split * dataset_size))
-    
+
     # Shuffle indices to randomize the train/test split
     np.random.seed(random_seed)
     np.random.shuffle(indices)
@@ -52,17 +45,13 @@ def get_dataloaders(h5_file_path, batch_size=1, test_split=0.2, random_seed=42):
     
     # Create DataLoaders
     # Note: batch_size is usually 1 for video summarization because 
-    # each video has a different sequence length (number of frames).
-    train_loader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        sampler=SubsetRandomSampler(train_indices)
-    )
+    # each video has a different sequence length (number of frames)
+    train_loader = DataLoader(dataset,
+        batch_size=batch_size,
+        sampler=SubsetRandomSampler(train_indices))
     
-    test_loader = DataLoader(
-        dataset, 
-        batch_size=batch_size, 
-        sampler=SubsetRandomSampler(test_indices)
-    )
+    test_loader = DataLoader(dataset,
+        batch_size=batch_size,
+        sampler=SubsetRandomSampler(test_indices))
     
     return train_loader, test_loader

@@ -3,12 +3,12 @@ import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
 
-# Assume models.py and losses.py are in the same directory
+# Import from your other files
 from models import SummDPPLSTM
 from losses import DPPLoss
-# from tools.data_loader import load_data  <-- Ensure this provides [features, scores, summary]
+from dataset import get_dataloaders
 
-def train_two_phase(train_set, val_set, nx=1024, nh=256, nout=256, device='cuda'):
+def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda'):
     
     model = SummDPPLSTM(nx=nx, nh=nh, nout=nout).to(device)
     
@@ -24,20 +24,21 @@ def train_two_phase(train_set, val_set, nx=1024, nh=256, nout=256, device='cuda'
     print("--- Starting Phase 1: Training vsLSTM (Importance) ---")
     optimizer_phase1 = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
     
-    for epoch in range(50): # Example epochs
+    for epoch in range(50):
         model.train()
         total_loss = 0.0
         
-        for seq_idx in range(len(train_set[0])):
-            video = torch.tensor(train_set[0][seq_idx], dtype=torch.float32).to(device)
-            gt_score = torch.tensor(train_set[1][seq_idx], dtype=torch.float32).to(device)
+        # PyTorch Iterator loop replaces the old Theano index loop
+        for video_features, gt_score, _ in train_loader:
+            # Squeeze removes the dummy batch dimension created by DataLoader
+            video_features = video_features.squeeze(0).to(device)
+            gt_score = gt_score.squeeze(0).to(device)
             
             optimizer_phase1.zero_grad()
-            
-            q_score, _ = model(video)
+            q_score, _ = model(video_features)
             
             # Phase 1 only cares about matching the ground truth importance scores
-            loss = criterion_score(q_score.squeeze(), gt_score.squeeze())
+            loss = criterion_score(q_score.squeeze(), gt_score)
             loss.backward()
             
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
@@ -45,9 +46,9 @@ def train_two_phase(train_set, val_set, nx=1024, nh=256, nout=256, device='cuda'
             total_loss += loss.item()
             
         if (epoch + 1) % 10 == 0:
-            print(f"Phase 1 - Epoch {epoch+1}, MSE Loss: {total_loss / len(train_set[0]):.4f}")
-            
-    # Save Phase 1 weights
+            print(f"Phase 1 - Epoch {epoch+1}, MSE Loss: {total_loss / len(train_loader):.4f}")
+
+    # Save Phase 1 weights        
     torch.save(model.state_dict(), save_dir / 'vsLSTM_phase1.pt')
 
     # ==========================================
@@ -57,29 +58,22 @@ def train_two_phase(train_set, val_set, nx=1024, nh=256, nout=256, device='cuda'
     # Load the converged Phase 1 weights
     model.load_state_dict(torch.save(save_dir / 'vsLSTM_phase1.pt'))
     
-    # Optional: Freeze the classification MLP so DPP only alters the kernel representations
-    # for param in model.classify_mlp.parameters():
-    #     param.requires_grad = False
-
-    optimizer_phase2 = optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=1e-5)
-    
-    dpp_weight = 0.1 # Tuning parameter to balance Importance vs Diversity
+    optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-5)
+    dpp_weight = 0.1 
     
     for epoch in range(50):
         model.train()
         total_loss = 0.0
         
-        for seq_idx in range(len(train_set[0])):
-            video = torch.tensor(train_set[0][seq_idx], dtype=torch.float32).to(device)
-            gt_score = torch.tensor(train_set[1][seq_idx], dtype=torch.float32).to(device)
-            gt_summary = torch.tensor(train_set[2][seq_idx], dtype=torch.float32).to(device)
+        for video_features, gt_score, gt_summary in train_loader:
+            video_features = video_features.squeeze(0).to(device)
+            gt_score = gt_score.squeeze(0).to(device)
+            gt_summary = gt_summary.squeeze(0).to(device)
             
             optimizer_phase2.zero_grad()
+            q_score, pred_k = model(video_features)
             
-            q_score, pred_k = model(video)
-            
-            # Phase 2 combines the MSE loss with the DPP subset loss
-            loss_score = criterion_score(q_score.squeeze(), gt_score.squeeze())
+            loss_score = criterion_score(q_score.squeeze(), gt_score)
             loss_dpp = criterion_dpp(pred_k, gt_summary)
             
             loss = loss_score + (dpp_weight * loss_dpp)
@@ -90,8 +84,18 @@ def train_two_phase(train_set, val_set, nx=1024, nh=256, nout=256, device='cuda'
             total_loss += loss.item()
             
         if (epoch + 1) % 10 == 0:
-            print(f"Phase 2 - Epoch {epoch+1}, Total Loss: {total_loss / len(train_set[0]):.4f}")
+            print(f"Phase 2 - Epoch {epoch+1}, Total Loss: {total_loss / len(train_loader):.4f}")
 
-    # Save final dppLSTM weights
     torch.save(model.state_dict(), save_dir / 'dppLSTM_final.pt')
     print("Training Complete. Final model saved.")
+
+if __name__ == '__main__':
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    
+    # Path to the Kaggle file (Change this to test TVSum, OVP, or YouTube!)
+    kaggle_h5_path = '/kaggle/input/summe-video-summarization/eccv16_dataset_summe_google_pool5.h5'
+    
+    print(f"Loading data from {kaggle_h5_path}...")
+    train_loader, test_loader = get_dataloaders(kaggle_h5_path, batch_size=1)
+    
+    train_two_phase(train_loader, device=device)
