@@ -8,15 +8,16 @@ from models import SummDPPLSTM
 from losses import DPPLoss
 from dataset import get_dataloaders
 
-def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda'):
+def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda',
+                    phase1_save_path='./saved_models/vsLSTM_phase1.pt', 
+                    final_save_path='./saved_models/dppLSTM_final.pt'):
     
     model = SummDPPLSTM(nx=nx, nh=nh, nout=nout).to(device)
     
     criterion_score = nn.MSELoss()
     criterion_dpp = DPPLoss()
     
-    save_dir = Path('./saved_models')
-    save_dir.mkdir(exist_ok=True)
+
 
     # ==========================================
     # PHASE 1: Train vsLSTM (Importance Only)
@@ -49,14 +50,15 @@ def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda'):
             print(f"Phase 1 - Epoch {epoch+1}, MSE Loss: {total_loss / len(train_loader):.4f}")
 
     # Save Phase 1 weights        
-    torch.save(model.state_dict(), save_dir / 'vsLSTM_phase1.pt')
+    Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), phase1_save_path)
 
     # ==========================================
     # PHASE 2: Train dppLSTM (Diversity)
     # ==========================================
     print("\n--- Starting Phase 2: Training dppLSTM (Diversity) ---")
     # Load the converged Phase 1 weights
-    model.load_state_dict(torch.save(save_dir / 'vsLSTM_phase1.pt'))
+    model.load_state_dict(torch.load(phase1_save_path))
     
     optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-5)
     dpp_weight = 0.1 
@@ -86,7 +88,7 @@ def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda'):
         if (epoch + 1) % 10 == 0:
             print(f"Phase 2 - Epoch {epoch+1}, Total Loss: {total_loss / len(train_loader):.4f}")
 
-    torch.save(model.state_dict(), save_dir / 'dppLSTM_final.pt')
+    torch.save(model.state_dict(), final_save_path)
     print("Training Complete. Final model saved.")
 
 if __name__ == '__main__':
