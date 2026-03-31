@@ -88,12 +88,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
                 print(f"--- Phase 1 Early stopping triggered at epoch {epoch+1}! ---")
                 break # Exit the Phase 1 training loop
 
-        print(f"Phase 1 Complete. Best vsLSTM Validation MSE: {best_val_loss_p1:.4f}")
-
-
-    # Save Phase 1 weights        
-    Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), phase1_save_path)
+        print(f"Phase 1 Complete. Best vsLSTM Validation MSE: {best_val_loss_p1:.4f}")  # Model is saved in the Early Stopping Checking
 
     # ==========================================
     # PHASE 2: Train dppLSTM (Diversity)
