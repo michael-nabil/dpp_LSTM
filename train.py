@@ -16,8 +16,6 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     
     criterion_score = nn.MSELoss()
     criterion_dpp = DPPLoss()
-    
-
 
     # ==========================================
     # PHASE 1: Train vsLSTM (Importance Only)
@@ -25,7 +23,14 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     print("--- Starting Phase 1: Training vsLSTM (Importance) ---")
     optimizer_phase1 = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
     
-    for epoch in range(50):
+    # Early Stopping variables
+    best_val_loss_p1 = float('inf')
+    patience_counter_p1 = 0
+    patience_limit_p1 = 15 # Stop if no improvement for 15 epochs
+    max_epochs_p1 = 50
+
+    for epoch in range(max_epochs_p1):
+        # Training Loop
         model.train()
         total_loss = 0.0
         
@@ -45,9 +50,46 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer_phase1.step()
             total_loss += loss.item()
+        avg_train_loss = train_loss / len(train_loader)
+
+        # Validation Loop
+        model.eval()
+        val_loss = 0.0
+        
+        with torch.no_grad():
+            for video_features, gt_score, _ in val_loader:
+                video_features = video_features.squeeze(0).to(device)
+                gt_score = gt_score.squeeze(0).to(device)
+                
+                q_score, _ = model(video_features)
+                
+                # Calculate validation MSE
+                loss = criterion_score(q_score.squeeze(), gt_score)
+                val_loss += loss.item()
+                
+        avg_val_loss = val_loss / len(val_loader)
+
+        # Print epoch metrics, and Checking for Early Stopping
+        print(f"Phase 1 - Epoch [{epoch+1}/{max_epochs_p1}] | Train MSE(loss): {avg_train_loss:.4f} | Val MSE: {avg_val_loss:.4f}")
+
+        if avg_val_loss < best_val_loss_p1:
+            print(f"   >> Phase 1 Val loss improved from {best_val_loss_p1:.4f} to {avg_val_loss:.4f}. Saving vsLSTM!")
+            best_val_loss_p1 = avg_val_loss
+            patience_counter_p1 = 0
             
-        if (epoch + 1) % 10 == 0:
-            print(f"Phase 1 - Epoch {epoch+1}, MSE Loss: {total_loss / len(train_loader):.4f}")
+            # Save the best Phase 1 weights securely
+            Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), phase1_save_path)
+        else:
+            patience_counter_p1 += 1
+            print(f"   >> No improvement. Patience: {patience_counter_p1}/{patience_limit_p1}")
+            
+            if patience_counter_p1 >= patience_limit_p1:
+                print(f"--- Phase 1 Early stopping triggered at epoch {epoch+1}! ---")
+                break # Exit the Phase 1 training loop
+
+        print(f"Phase 1 Complete. Best vsLSTM Validation MSE: {best_val_loss_p1:.4f}")
+
 
     # Save Phase 1 weights        
     Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
