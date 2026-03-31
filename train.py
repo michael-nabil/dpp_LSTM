@@ -8,7 +8,7 @@ from models import SummDPPLSTM
 from losses import DPPLoss
 from dataset import get_dataloaders
 
-def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda',
+def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device='cuda',
                     phase1_save_path='./saved_models/vsLSTM_phase1.pt', 
                     final_save_path='./saved_models/dppLSTM_final.pt'):
     
@@ -63,9 +63,17 @@ def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda',
     optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-5)
     dpp_weight = 0.1 
     
+    # Variables for Monitoring each epoch's validation loss, for using Early Stopping
+    best_val_loss = float('inf')
+    patience_counter = 0
+    patience_limit = 15 # Stop if no improvement for 15 epochs
+    max_epochs = 100
+
     for epoch in range(50):
+        
+        # Training Loop
         model.train()
-        total_loss = 0.0
+        train_loss = 0.0
         
         for video_features, gt_score, gt_summary in train_loader:
             video_features = video_features.squeeze(0).to(device)
@@ -83,13 +91,49 @@ def train_two_phase(train_loader, nx=1024, nh=256, nout=256, device='cuda',
             
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer_phase2.step()
-            total_loss += loss.item()
-            
-        if (epoch + 1) % 10 == 0:
-            print(f"Phase 2 - Epoch {epoch+1}, Total Loss: {total_loss / len(train_loader):.4f}")
+            train_loss += loss.item()
+        avg_train_loss = train_loss / len(train_loader)
 
-    torch.save(model.state_dict(), final_save_path)
-    print("Training Complete. Final model saved.")
+        # Validation Loop
+        model.eval()
+        val_loss = 0.0
+        with torch.no_grad(): # Disable gradient calculation for speed and memory
+            for video_features, gt_score, gt_summary in val_loader:
+                video_features = video_features.squeeze(0).to(device)
+                gt_score = gt_score.squeeze(0).to(device)
+                gt_summary = gt_summary.squeeze(0).to(device)
+                
+                q_score, pred_k = model(video_features)
+                
+                loss_score = criterion_score(q_score.squeeze(), gt_score)
+                loss_dpp = criterion_dpp(pred_k, gt_summary)
+                
+                loss = loss_score + (dpp_weight * loss_dpp)
+                val_loss += loss.item()
+                
+        avg_val_loss = val_loss / len(val_loader)
+        
+        # Print epoch metrics, and Checking for Early Stopping
+
+        print(f"Epoch [{epoch+1}/{max_epochs}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+
+        if avg_val_loss < best_val_loss:
+            print(f"   >> Validation loss improved from {best_val_loss:.4f} to {avg_val_loss:.4f}. Saving model!")
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+            
+            # Save the model safely
+            Path(final_save_path).parent.mkdir(parents=True, exist_ok=True)
+            torch.save(model.state_dict(), final_save_path)
+        else:
+            patience_counter += 1
+            print(f"   >> No improvement. Patience: {patience_counter}/{patience_limit}")
+            
+            if patience_counter >= patience_limit:
+                print(f"--- Early stopping triggered at epoch {epoch+1}! ---")
+                break # Exit the training loop early
+
+    print(f"Phase 2 Complete. Best Validation Loss: {best_val_loss:.4f}")
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
