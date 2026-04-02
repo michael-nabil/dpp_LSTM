@@ -27,12 +27,12 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     best_val_loss_p1 = float('inf')
     patience_counter_p1 = 0
     patience_limit_p1 = 15 # Stop if no improvement for 15 epochs
-    max_epochs_p1 = 50
+    max_epochs_p1 = 100
 
     for epoch in range(max_epochs_p1):
         # Training Loop
         model.train()
-        total_loss = 0.0
+        train_loss = 0.0
         
         # PyTorch Iterator loop replaces the old Theano index loop
         for video_features, gt_score, _ in train_loader:
@@ -49,7 +49,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
             optimizer_phase1.step()
-            total_loss += loss.item()
+            train_loss += loss.item()
         avg_train_loss = train_loss / len(train_loader)
 
         # Validation Loop
@@ -101,12 +101,12 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     dpp_weight = 0.1 
     
     # Variables for Monitoring each epoch's validation loss, for using Early Stopping
-    best_val_loss = float('inf')
-    patience_counter = 0
-    patience_limit = 15 # Stop if no improvement for 15 epochs
-    max_epochs = 100
+    best_val_loss_p2 = float('inf')
+    patience_counter_p2 = 0
+    patience_limit_p2 = 15 # Stop if no improvement for 15 epochs
+    max_epochs_p2 = 100
 
-    for epoch in range(50):
+    for epoch in range(max_epochs_p2):
         
         # Training Loop
         model.train()
@@ -152,25 +152,25 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
         
         # Print epoch metrics, and Checking for Early Stopping
 
-        print(f"Epoch [{epoch+1}/{max_epochs}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+        print(f"Epoch [{epoch+1}/{max_epochs_p2}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
-        if avg_val_loss < best_val_loss:
-            print(f"   >> Validation loss improved from {best_val_loss:.4f} to {avg_val_loss:.4f}. Saving model!")
-            best_val_loss = avg_val_loss
-            patience_counter = 0
+        if avg_val_loss < best_val_loss_p2:
+            print(f"   >> Validation loss improved from {best_val_loss_p2:.4f} to {avg_val_loss:.4f}. Saving model!")
+            best_val_loss_p2 = avg_val_loss
+            patience_counter_p2 = 0
             
             # Save the model safely
             Path(final_save_path).parent.mkdir(parents=True, exist_ok=True)
             torch.save(model.state_dict(), final_save_path)
         else:
-            patience_counter += 1
-            print(f"   >> No improvement. Patience: {patience_counter}/{patience_limit}")
+            patience_counter_p2 += 1
+            print(f"   >> No improvement. Patience: {patience_counter_p2}/{patience_limit_p2}")
             
-            if patience_counter >= patience_limit:
+            if patience_counter_p2 >= patience_limit_p2:
                 print(f"--- Early stopping triggered at epoch {epoch+1}! ---")
                 break # Exit the training loop early
 
-    print(f"Phase 2 Complete. Best Validation Loss: {best_val_loss:.4f}")
+    print(f"Phase 2 Complete. Best Validation Loss: {best_val_loss_p2:.4f}")
 
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
