@@ -43,6 +43,18 @@ class SummDPPLSTM(nn.Module):
         # Optimized PyTorch Bi-LSTM replacing the slow manual Theano loop
         self.bilstm = nn.LSTM(input_size=nx, hidden_size=nh, bidirectional=True, batch_first=False)
         
+        # --- NEW: Orthogonal Initialization for LSTM ---
+        for name, param in self.bilstm.named_parameters():
+            if 'weight_ih' in name:
+                nn.init.xavier_uniform_(param.data)
+            elif 'weight_hh' in name:
+                nn.init.orthogonal_(param.data) # Crucial for 2016 RNN replication
+            elif 'bias' in name:
+                param.data.fill_(0)
+                # Set forget gate bias to 1.0 (Standard LSTM trick from that era)
+                n = param.size(0)
+                param.data[(n // 4):(n // 2)].fill_(1.0)
+
         # Phase 1: Importance Scoring (vsLSTM)
         # Input size is nx (original video) + 2*nh (forward and backward hidden states)
         self.classify_mlp = MLP([nx + 2*nh, nh, 1], net_type='linear')
