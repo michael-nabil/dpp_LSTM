@@ -21,7 +21,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     # PHASE 1: Train vsLSTM (Importance Only)
     # ==========================================
     print("--- Starting Phase 1: Training vsLSTM (Importance) ---")
-    optimizer_phase1 = optim.Adam(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    optimizer_phase1 = optim.Adam(model.parameters(), lr=1e-3)
     
     # Early Stopping variables
     best_val_loss_p1 = float('inf')
@@ -29,28 +29,45 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     patience_limit_p1 = 15 # Stop if no improvement for 15 epochs
     max_epochs_p1 = 100
 
+    # The new change by using the same minibatch size from dppLSTM_main.py
+    accumulation_steps = 10
+
     for epoch in range(max_epochs_p1):
         # Training Loop
         model.train()
         train_loss = 0.0
         
         # PyTorch Iterator loop replaces the old Theano index loop
-        for video_features, gt_score, _ in train_loader:
+        for i, (video_features, gt_score, _) in enumerate(train_loader):
             # Squeeze removes the dummy batch dimension created by DataLoader
             video_features = video_features.squeeze(0).to(device)
             gt_score = gt_score.squeeze(0).to(device)
             
-            optimizer_phase1.zero_grad()
+
             q_score, _ = model(video_features)
             
+            q_score_flat = q_score.contiguous().view(-1)
+            gt_score_flat = gt_score.contiguous().view(-1)
+
             # Phase 1 only cares about matching the ground truth importance scores
-            loss = criterion_score(q_score.squeeze(), gt_score)
-            loss.backward()
+            loss = criterion_score(q_score_flat, gt_score_flat)
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-            optimizer_phase1.step()
+            scaled_loss = loss / accumulation_steps
+            scaled_loss.backward() # Accumulate the gradients
+            
             train_loss += loss.item()
-        avg_train_loss = train_loss / len(train_loader)
+
+            # -----------------------------------------------------
+            # UPDATE WEIGHTS EVERY 10 VIDEOS,
+            # Instead of updating weights every 1 train example (1 video), update weights after 10 train examples (10 videos)
+            # -----------------------------------------------------
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
+                optimizer_phase1.step()  # Take a step
+
+                # IMMEDIATELY zero the gradients for the next 10 videos
+                optimizer_phase1.zero_grad()
+        avg_train_loss = train_loss / len(train_loader)  # Calculation of avg_train_loss stays as it is, as we calculate total_train_loss without being scaled (in train_loss variable we accumulate the original loss of each train example)
 
         # Validation Loop
         model.eval()
@@ -97,7 +114,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     # Load the converged Phase 1 weights
     model.load_state_dict(torch.load(phase1_save_path))
     
-    optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-5)
+    optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-3)
     dpp_weight = 0.1 
     
     # Variables for Monitoring each epoch's validation loss, for using Early Stopping
@@ -111,25 +128,39 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
         # Training Loop
         model.train()
         train_loss = 0.0
-        
-        for video_features, gt_score, gt_summary in train_loader:
+        optimizer_phase2.zero_grad() # Zero gradients at the START
+
+        for i, (video_features, gt_score, gt_summary) in enumerate(train_loader):
             video_features = video_features.squeeze(0).to(device)
             gt_score = gt_score.squeeze(0).to(device)
             gt_summary = gt_summary.squeeze(0).to(device)
             
-            optimizer_phase2.zero_grad()
             q_score, pred_k = model(video_features)
             
-            loss_score = criterion_score(q_score.squeeze(), gt_score)
+            q_score_flat = q_score.contiguous().view(-1)
+            gt_score_flat = gt_score.contiguous().view(-1)
+
+            loss_score = criterion_score(q_score_flat, gt_score_flat)
             loss_dpp = criterion_dpp(pred_k, gt_summary)
             
             loss = loss_score + (dpp_weight * loss_dpp)
-            loss.backward()
             
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)
-            optimizer_phase2.step()
+            scaled_loss = loss / accumulation_steps
+            scaled_loss.backward() # Accumulate the gradients
+            
             train_loss += loss.item()
-        avg_train_loss = train_loss / len(train_loader)
+
+            # -----------------------------------------------------
+            # UPDATE WEIGHTS EVERY 10 VIDEOS
+            # -----------------------------------------------------
+            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
+                optimizer_phase2.step()  # Take a step
+                
+                # IMMEDIATELY zero the gradients for the next 10 videos
+                optimizer_phase2.zero_grad()
+        avg_train_loss = train_loss / len(train_loader)  # Calculation of avg_train_loss stays as it is, as we calculate total_train_loss without being scaled (in train_loss variable we accumulate the original loss of each train example)
+
 
         # Validation Loop
         model.eval()

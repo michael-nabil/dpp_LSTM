@@ -13,8 +13,10 @@ class MLP(nn.Module):
     
     def _init_weights(self):
         for linear in self.linears:
-            nn.init.uniform_(linear.weight, -0.02, 0.02)
-            nn.init.uniform_(linear.bias, -0.02, 0.02)
+            # nn.init.uniform_(linear.weight, -0.02, 0.02)
+            # nn.init.uniform_(linear.bias, -0.02, 0.02)
+            nn.init.uniform_(linear.weight, -0.08, 0.08) 
+            nn.init.zeros_(linear.bias)
             
     def forward(self, x):
         h = x
