@@ -80,8 +80,10 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
                 
                 q_score, _ = model(video_features)
                 
+                q_score_flat = q_score.contiguous().view(-1)
+                gt_score_flat = gt_score.contiguous().view(-1)
                 # Calculate validation MSE
-                loss = criterion_score(q_score.squeeze(), gt_score)
+                loss = criterion_score(q_score_flat, gt_score_flat)
                 val_loss += loss.item()
                 
         avg_val_loss = val_loss / len(val_loader)
@@ -173,7 +175,10 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
                 
                 q_score, pred_k = model(video_features)
                 
-                loss_score = criterion_score(q_score.squeeze(), gt_score)
+                q_score_flat = q_score.contiguous().view(-1)
+                gt_score_flat = gt_score.contiguous().view(-1)
+
+                loss_score = criterion_score(q_score_flat, gt_score_flat)
                 loss_dpp = criterion_dpp(pred_k, gt_summary)
                 
                 loss = loss_score + (dpp_weight * loss_dpp)

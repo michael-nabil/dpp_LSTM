@@ -10,7 +10,7 @@ def knapsack_dp(values, weights, capacity):
     weights = np.array(weights, dtype=np.int32)
     capacity = int(capacity)
     
-    dp = np.zeros((n + 1, capacity + 1), dtype=np.int32)
+    dp = np.zeros((n + 1, capacity + 1), dtype=np.float32)
     
     # Build the DP table
     for i in range(1, n + 1):
