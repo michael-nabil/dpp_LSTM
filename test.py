@@ -34,6 +34,9 @@ def test_model(test_loader, model_path, nx=1024, nh=256, nout=256, device='cuda'
             q_score, _ = model(features)
             frame_scores = q_score.squeeze().cpu().numpy()
             
+            # --- NEW FIX: Convert any negative linear outputs to 0 for Knapsack ---
+            frame_scores = np.maximum(frame_scores, 0.0)
+
             # 3. Post-Processing: Convert frame scores to a 15% key-shot summary
             machine_summary = generate_summary(frame_scores, change_points, n_frames)
             

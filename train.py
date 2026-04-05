@@ -143,7 +143,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             gt_score_flat = gt_score.contiguous().view(-1)
 
             loss_score = criterion_score(q_score_flat, gt_score_flat)
-            loss_dpp = criterion_dpp(pred_k, gt_summary)
+            loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
             
             loss = loss_score + (dpp_weight * loss_dpp)
             
@@ -179,7 +179,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
                 gt_score_flat = gt_score.contiguous().view(-1)
 
                 loss_score = criterion_score(q_score_flat, gt_score_flat)
-                loss_dpp = criterion_dpp(pred_k, gt_summary)
+                loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
                 
                 loss = loss_score + (dpp_weight * loss_dpp)
                 val_loss += loss.item()
