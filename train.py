@@ -36,7 +36,8 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
         # Training Loop
         model.train()
         train_loss = 0.0
-        
+        optimizer_phase1.zero_grad() # Zero gradients at the START
+
         # PyTorch Iterator loop replaces the old Theano index loop
         for i, (video_features, gt_score, _) in enumerate(train_loader):
             # Squeeze removes the dummy batch dimension created by DataLoader
@@ -52,7 +53,15 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             # Phase 1 only cares about matching the ground truth importance scores
             loss = criterion_score(q_score_flat, gt_score_flat)
             
-            scaled_loss = loss / accumulation_steps
+            # --- Handling the edge case of reamining training examples (videos) less that the minibatch size (accumulation_steps) ---
+            # Find out which index the current accumulation chunk started at
+            chunk_start_index = i - (i % accumulation_steps)
+            # How many videos are remaining from this start index?
+            remaining_videos = len(train_loader) - chunk_start_index
+            # The actual steps is either 10, or whatever is left over!
+            actual_steps = min(accumulation_steps, remaining_videos)
+
+            scaled_loss = loss / actual_steps
             scaled_loss.backward() # Accumulate the gradients
             
             train_loss += loss.item()
@@ -146,8 +155,16 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
             
             loss = loss_score + (dpp_weight * loss_dpp)
-            
-            scaled_loss = loss / accumulation_steps
+
+            # --- Handling the edge case of reamining training examples (videos) less that the minibatch size (accumulation_steps) ---
+            # Find out which index the current accumulation chunk started at
+            chunk_start_index = i - (i % accumulation_steps)
+            # How many videos are remaining from this start index?
+            remaining_videos = len(train_loader) - chunk_start_index
+            # The actual steps is either 10, or whatever is left over!
+            actual_steps = min(accumulation_steps, remaining_videos)
+
+            scaled_loss = loss / actual_steps
             scaled_loss.backward() # Accumulate the gradients
             
             train_loss += loss.item()
