@@ -50,7 +50,7 @@ class SummDPPLSTM(nn.Module):
 
         # Phase 1: Importance Scoring (vsLSTM)
         # Input size is nx (original video) + 2*nh (forward and backward hidden states)
-        self.classify_mlp = MLP([nx + 2*nh, nh, 1], net_type='linear')
+        self.classify_mlp = MLP([nx + 2*nh, nh, 1], net_type='sigmoid')
         
         # Phase 2: Kernel Feature Extraction (dppLSTM)
         self.kernel_mlp = MLP([nx + 2*nh, nh, nout], net_type='linear')

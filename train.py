@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from pathlib import Path
-
+import torch.nn.functional as F
 # Import from your other files
 from models import SummDPPLSTM
 from losses import DPPLoss
@@ -26,7 +26,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
     # Early Stopping variables
     best_val_loss_p1 = float('inf')
     patience_counter_p1 = 0
-    patience_limit_p1 = 15 # Stop if no improvement for 15 epochs
+    patience_limit_p1 = 150 # Stop if no improvement for 15 epochs
     max_epochs_p1 = 100
 
     # The new change by using the same minibatch size from dppLSTM_main.py
@@ -43,7 +43,9 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             # Squeeze removes the dummy batch dimension created by DataLoader
             video_features = video_features.squeeze(0).to(device)
             gt_score = gt_score.squeeze(0).to(device)
-            
+
+            # Normalizing the input feature vectors
+            video_features = F.normalize(video_features, p=2, dim=1)
 
             q_score, _ = model(video_features)
             
@@ -71,7 +73,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             # Instead of updating weights every 1 train example (1 video), update weights after 10 train examples (10 videos)
             # -----------------------------------------------------
             if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
+                torch.nn.utils.clip_grad_value_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
                 optimizer_phase1.step()  # Take a step
 
                 # IMMEDIATELY zero the gradients for the next 10 videos
@@ -106,8 +108,8 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             patience_counter_p1 = 0
             
             # Save the best Phase 1 weights securely
-            Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), phase1_save_path)
+            # Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
+            # torch.save(model.state_dict(), phase1_save_path)
         else:
             patience_counter_p1 += 1
             print(f"   >> No improvement. Patience: {patience_counter_p1}/{patience_limit_p1}")
@@ -117,114 +119,119 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
                 break # Exit the Phase 1 training loop
 
     print(f"Phase 1 Complete. Best vsLSTM Validation MSE: {best_val_loss_p1:.4f}")  # Model is saved in the Early Stopping Checking
-
+    Path(phase1_save_path).parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), phase1_save_path)
     # ==========================================
     # PHASE 2: Train dppLSTM (Diversity)
     # ==========================================
-    print("\n--- Starting Phase 2: Training dppLSTM (Diversity) ---")
-    # Load the converged Phase 1 weights
-    model.load_state_dict(torch.load(phase1_save_path))
+    # print("\n--- Starting Phase 2: Training dppLSTM (Diversity) ---")
+    # # Load the converged Phase 1 weights
+    # model.load_state_dict(torch.load(phase1_save_path))
     
-    optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-3)
-    dpp_weight = 0.1 
+    # optimizer_phase2 = optim.Adam(model.parameters(), lr=1e-3)
+    # dpp_weight = 1.0
     
-    # Variables for Monitoring each epoch's validation loss, for using Early Stopping
-    best_val_loss_p2 = float('inf')
-    patience_counter_p2 = 0
-    patience_limit_p2 = 15 # Stop if no improvement for 15 epochs
-    max_epochs_p2 = 100
+    # # Variables for Monitoring each epoch's validation loss, for using Early Stopping
+    # best_val_loss_p2 = float('inf')
+    # patience_counter_p2 = 0
+    # patience_limit_p2 = 150 # Stop if no improvement for 15 epochs
+    # max_epochs_p2 = 100
 
-    for epoch in range(max_epochs_p2):
+    # for epoch in range(max_epochs_p2):
         
-        # Training Loop
-        model.train()
-        train_loss = 0.0
-        optimizer_phase2.zero_grad() # Zero gradients at the START
+    #     # Training Loop
+    #     model.train()
+    #     train_loss = 0.0
+    #     optimizer_phase2.zero_grad() # Zero gradients at the START
 
-        for i, (video_features, gt_score, gt_summary) in enumerate(train_loader):
-            video_features = video_features.squeeze(0).to(device)
-            gt_score = gt_score.squeeze(0).to(device)
-            gt_summary = gt_summary.squeeze(0).to(device)
+    #     for i, (video_features, gt_score, gt_summary) in enumerate(train_loader):
+    #         video_features = video_features.squeeze(0).to(device)
+    #         gt_score = gt_score.squeeze(0).to(device)
+    #         gt_summary = gt_summary.squeeze(0).to(device)
+
+            # Normalizing the input feature vectors
+    #         video_features = F.normalize(video_features, p=2, dim=1)
+    
+    #         q_score, pred_k = model(video_features)
             
-            q_score, pred_k = model(video_features)
+    #         q_score_flat = q_score.contiguous().view(-1)
+    #         gt_score_flat = gt_score.contiguous().view(-1)
+
+    #         loss_score = criterion_score(q_score_flat, gt_score_flat)
+    #         loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
             
-            q_score_flat = q_score.contiguous().view(-1)
-            gt_score_flat = gt_score.contiguous().view(-1)
+    #         loss = loss_score + (dpp_weight * loss_dpp)
 
-            loss_score = criterion_score(q_score_flat, gt_score_flat)
-            loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
+    #         # --- Handling the edge case of reamining training examples (videos) less that the minibatch size (accumulation_steps) ---
+    #         # Find out which index the current accumulation chunk started at
+    #         chunk_start_index = i - (i % accumulation_steps)
+    #         # How many videos are remaining from this start index?
+    #         remaining_videos = len(train_loader) - chunk_start_index
+    #         # The actual steps is either 10, or whatever is left over!
+    #         actual_steps = min(accumulation_steps, remaining_videos)
+
+    #         scaled_loss = loss / actual_steps
+    #         scaled_loss.backward() # Accumulate the gradients
             
-            loss = loss_score + (dpp_weight * loss_dpp)
+    #         train_loss += loss.item()
 
-            # --- Handling the edge case of reamining training examples (videos) less that the minibatch size (accumulation_steps) ---
-            # Find out which index the current accumulation chunk started at
-            chunk_start_index = i - (i % accumulation_steps)
-            # How many videos are remaining from this start index?
-            remaining_videos = len(train_loader) - chunk_start_index
-            # The actual steps is either 10, or whatever is left over!
-            actual_steps = min(accumulation_steps, remaining_videos)
-
-            scaled_loss = loss / actual_steps
-            scaled_loss.backward() # Accumulate the gradients
-            
-            train_loss += loss.item()
-
-            # -----------------------------------------------------
-            # UPDATE WEIGHTS EVERY 10 VIDEOS
-            # -----------------------------------------------------
-            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
-                optimizer_phase2.step()  # Take a step
+    #         # -----------------------------------------------------
+    #         # UPDATE WEIGHTS EVERY 10 VIDEOS
+    #         # -----------------------------------------------------
+    #         if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
+    #             torch.nn.utils.clip_grad_value_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
+    #             optimizer_phase2.step()  # Take a step
                 
-                # IMMEDIATELY zero the gradients for the next 10 videos
-                optimizer_phase2.zero_grad()
-        avg_train_loss = train_loss / len(train_loader)  # Calculation of avg_train_loss stays as it is, as we calculate total_train_loss without being scaled (in train_loss variable we accumulate the original loss of each train example)
+    #             # IMMEDIATELY zero the gradients for the next 10 videos
+    #             optimizer_phase2.zero_grad()
+    #     avg_train_loss = train_loss / len(train_loader)  # Calculation of avg_train_loss stays as it is, as we calculate total_train_loss without being scaled (in train_loss variable we accumulate the original loss of each train example)
 
 
-        # Validation Loop
-        model.eval()
-        val_loss = 0.0
-        with torch.no_grad(): # Disable gradient calculation for speed and memory
-            for video_features, gt_score, gt_summary in val_loader:
-                video_features = video_features.squeeze(0).to(device)
-                gt_score = gt_score.squeeze(0).to(device)
-                gt_summary = gt_summary.squeeze(0).to(device)
+    #     # Validation Loop
+    #     model.eval()
+    #     val_loss = 0.0
+    #     with torch.no_grad(): # Disable gradient calculation for speed and memory
+    #         for video_features, gt_score, gt_summary in val_loader:
+    #             video_features = video_features.squeeze(0).to(device)
+    #             gt_score = gt_score.squeeze(0).to(device)
+    #             gt_summary = gt_summary.squeeze(0).to(device)
                 
-                q_score, pred_k = model(video_features)
+    #             q_score, pred_k = model(video_features)
                 
-                q_score_flat = q_score.contiguous().view(-1)
-                gt_score_flat = gt_score.contiguous().view(-1)
+    #             q_score_flat = q_score.contiguous().view(-1)
+    #             gt_score_flat = gt_score.contiguous().view(-1)
 
-                loss_score = criterion_score(q_score_flat, gt_score_flat)
-                loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
+    #             loss_score = criterion_score(q_score_flat, gt_score_flat)
+    #             loss_dpp = criterion_dpp(q_score_flat, pred_k, gt_summary)
                 
-                loss = loss_score + (dpp_weight * loss_dpp)
-                val_loss += loss.item()
+    #             loss = loss_score + (dpp_weight * loss_dpp)
+    #             val_loss += loss.item()
                 
-        avg_val_loss = val_loss / len(val_loader)
+    #     avg_val_loss = val_loss / len(val_loader)
         
-        # Print epoch metrics, and Checking for Early Stopping
+    #     # Print epoch metrics, and Checking for Early Stopping
 
-        print(f"Epoch [{epoch+1}/{max_epochs_p2}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
+    #     print(f"Epoch [{epoch+1}/{max_epochs_p2}] | Train Loss: {avg_train_loss:.4f} | Val Loss: {avg_val_loss:.4f}")
 
-        if avg_val_loss < best_val_loss_p2:
-            print(f"   >> Validation loss improved from {best_val_loss_p2:.4f} to {avg_val_loss:.4f}. Saving model!")
-            best_val_loss_p2 = avg_val_loss
-            patience_counter_p2 = 0
+    #     if avg_val_loss < best_val_loss_p2:
+    #         print(f"   >> Validation loss improved from {best_val_loss_p2:.4f} to {avg_val_loss:.4f}. Saving model!")
+    #         best_val_loss_p2 = avg_val_loss
+    #         patience_counter_p2 = 0
             
-            # Save the model safely
-            Path(final_save_path).parent.mkdir(parents=True, exist_ok=True)
-            torch.save(model.state_dict(), final_save_path)
-        else:
-            patience_counter_p2 += 1
-            print(f"   >> No improvement. Patience: {patience_counter_p2}/{patience_limit_p2}")
+    #         # Save the model safely
+    #         # Path(final_save_path).parent.mkdir(parents=True, exist_ok=True)
+    #         # torch.save(model.state_dict(), final_save_path)
+    #     else:
+    #         patience_counter_p2 += 1
+    #         print(f"   >> No improvement. Patience: {patience_counter_p2}/{patience_limit_p2}")
             
-            if patience_counter_p2 >= patience_limit_p2:
-                print(f"--- Early stopping triggered at epoch {epoch+1}! ---")
-                break # Exit the training loop early
+    #         if patience_counter_p2 >= patience_limit_p2:
+    #             print(f"--- Early stopping triggered at epoch {epoch+1}! ---")
+    #             break # Exit the training loop early
 
-    print(f"Phase 2 Complete. Best Validation Loss: {best_val_loss_p2:.4f}")
-
+    # print(f"Phase 2 Complete. Best Validation Loss: {best_val_loss_p2:.4f}")
+    # Path(final_save_path).parent.mkdir(parents=True, exist_ok=True)
+    # torch.save(model.state_dict(), final_save_path)
 if __name__ == '__main__':
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     

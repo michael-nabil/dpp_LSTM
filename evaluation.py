@@ -37,13 +37,33 @@ def generate_summary(frame_scores, change_points, n_frames, limit_ratio=0.15):
     # 1. Calculate shot-level weights (durations) and values (importance)
     shot_weights = []
     shot_values = []
-    
+
+    # THE FIX: Calculate the downsampling ratio
+    # e.g., 172 model predictions / 2580 original frames = 0.066
+    ratio = len(frame_scores) / float(n_frames)
+
     for shot in change_points:
         start, end = shot[0], shot[1]
-        # Length of the shot
-        shot_weights.append(end - start + 1)
-        # The value is the sum of the frame scores inside this shot
-        shot_values.append(np.sum(frame_scores[start:end+1]))
+        shot_length = end - start + 1
+        shot_weights.append(shot_length)
+        
+        # Map original frame boundaries to the downsampled feature index
+        down_start = int(start * ratio)
+        down_end = int(end * ratio)
+        
+        # Extract the scores for this shot safely
+        scores = frame_scores[down_start : down_end + 1]
+        
+        if len(scores) > 0:
+            # Calculate the true value of the shot using the mean score
+            shot_values.append(np.mean(scores) * shot_length)
+        else:
+            shot_values.append(0.0)
+        # start, end = shot[0], shot[1]
+        # # Length of the shot
+        # shot_weights.append(end - start + 1)
+        # # The value is the sum of the frame scores inside this shot
+        # shot_values.append(np.sum(frame_scores[start:end+1]))
         
     # 2. Define the capacity (maximum 15% of the total video length)
     capacity = int(n_frames * limit_ratio)
