@@ -40,17 +40,18 @@ class SummDPPLSTM(nn.Module):
         self.c_init_mlp = MLP([nx, nh], net_type='tanh')
         self.h_init_mlp = MLP([nx, nh], net_type='tanh')
         
-        # Optimized PyTorch Bi-LSTM replacing the slow manual Theano loop
-        self.bilstm = nn.LSTM(input_size=nx, hidden_size=nh, bidirectional=True, batch_first=False)
+        # New Change: Unidirectional LSTM to force shared weights, as implemented in the paper's source code
+        # Set bidirectinoal to False
+        self.lstm = nn.LSTM(input_size=nx, hidden_size=nh, bidirectional=False, batch_first=False)
         
         # --- EXACT 2016 THEANO LSTM INITIALIZATION ---
-        for name, param in self.bilstm.named_parameters():
+        for name, param in self.lstm.named_parameters():
             # Both weights AND biases were initialized uniformly between -0.02 and 0.02
             nn.init.uniform_(param.data, -0.02, 0.02)
 
         # Phase 1: Importance Scoring (vsLSTM)
         # Input size is nx (original video) + 2*nh (forward and backward hidden states)
-        self.classify_mlp = MLP([nx + 2*nh, nh, 1], net_type='sigmoid')
+        self.classify_mlp = MLP([nx + 2*nh, nh, 1], net_type='linear')
         
         # Phase 2: Kernel Feature Extraction (dppLSTM)
         self.kernel_mlp = MLP([nx + 2*nh, nh, nout], net_type='linear')
@@ -59,23 +60,29 @@ class SummDPPLSTM(nn.Module):
         # video shape expected: (seq_len, nx)
         seq_len = video.shape[0]
         
+        # New change: Using same weights for Both LSTM directions, instead of different set of weights for each direction
+
         # 1. Initialize states from the mean visual feature
         video_mean = torch.mean(video, dim=0, keepdim=True)
         c0_base = self.c_init_mlp(video_mean) # (1, nh)
         h0_base = self.h_init_mlp(video_mean) # (1, nh)
         
-        # PyTorch Bi-LSTM expects shape: (num_layers * num_directions, batch, hidden_size)
-        c0 = c0_base.repeat(2, 1, 1) 
-        h0 = h0_base.repeat(2, 1, 1)
+        # Shape for unidirectional: (num_layers=1, batch=1, hidden_size)
+        c0 = c0_base.unsqueeze(0) 
+        h0 = h0_base.unsqueeze(0)
         
-        # 2. Run the Bi-LSTM
         video_unsq = video.unsqueeze(1) # shape: (seq_len, 1, nx)
-        lstm_out, _ = self.bilstm(video_unsq, (h0, c0))
-        lstm_out = lstm_out.squeeze(1)  # shape: (seq_len, 2*nh)
+        # 2. Forward Pass
+        lstm_fwd, _ = self.lstm(video_unsq, (h0, c0))
         
-        # 3. Concatenate original features with temporal hidden states
-        h_combined = torch.cat([video, lstm_out], dim=1) # (seq_len, nx + 2*nh)
+        # 3. Backward Pass (Same LSTM, Same Weights, Reversed Input)
+        video_rev = video_unsq.flip(0)
+        lstm_bwd, _ = self.lstm(video_rev, (h0, c0))
+        lstm_bwd = lstm_bwd.flip(0) # Un-reverse the output
         
+        # 4. Concatenate
+        h_combined = torch.cat([video, lstm_fwd.squeeze(1), lstm_bwd.squeeze(1)], dim=1)
+
         # 4. Phase 1 Output: Frame Importance Score (q)
         # BUG FIXED: Removing the sigmoid wrapper! The MSE loss needs the raw linear output.
         q_score = self.classify_mlp(h_combined)

@@ -29,7 +29,7 @@ def test_model(test_loader, model_path, nx=1024, nh=256, nout=256, device='cuda'
             n_frames = n_frames.item() # Convert 1D tensor back to Python int
             user_summary = user_summary.squeeze(0).numpy()
             video_id = video_id[0]
-            video_features = F.normalize(video_features, p=2, dim=1)
+            # video_features = F.normalize(video_features, p=2, dim=1)
             # 2. Forward Pass: Get frame-level importance scores
             q_score, _ = model(video_features)
             frame_scores = q_score.squeeze().cpu().numpy()
