@@ -44,8 +44,7 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
             video_features = video_features.squeeze(0).to(device)
             gt_score = gt_score.squeeze(0).to(device)
 
-            # Normalizing the input feature vectors
-            # video_features = F.normalize(video_features, p=2, dim=1)
+            optimizer_phase1.zero_grad() # Zero gradients at the START
 
             q_score, _ = model(video_features)
             
@@ -54,32 +53,13 @@ def train_two_phase(train_loader, val_loader, nx=1024, nh=256, nout=256, device=
 
             # Phase 1 only cares about matching the ground truth importance scores
             loss = criterion_score(q_score_flat, gt_score_flat)
-            
-            # --- Handling the edge case of reamining training examples (videos) less that the minibatch size (accumulation_steps) ---
-            # Find out which index the current accumulation chunk started at
-            # chunk_start_index = i - (i % accumulation_steps)
-            # How many videos are remaining from this start index?
-            # remaining_videos = len(train_loader) - chunk_start_index
-            # The actual steps is either 10, or whatever is left over!
-            # actual_steps = min(accumulation_steps, remaining_videos)
-
-            # scaled_loss = loss / actual_steps
-            # scaled_loss.backward() # Accumulate the gradients
 
             # a New Change: stop dividing the loss, The gradients are too small to survive PyTorch's Adam eps.
             loss.backward() # Accumulate the raw gradients directly!
+            torch.nn.utils.clip_grad_value_(model.parameters(), 5.0)
+            optimizer_phase1.step()
             train_loss += loss.item()
 
-            # -----------------------------------------------------
-            # UPDATE WEIGHTS EVERY 10 VIDEOS,
-            # Instead of updating weights every 1 train example (1 video), update weights after 10 train examples (10 videos)
-            # -----------------------------------------------------
-            if (i + 1) % accumulation_steps == 0 or (i + 1) == len(train_loader):
-                torch.nn.utils.clip_grad_value_(model.parameters(), 5.0)  # Clip gradients for the accumulated batch
-                optimizer_phase1.step()  # Take a step
-
-                # IMMEDIATELY zero the gradients for the next 10 videos
-                optimizer_phase1.zero_grad()
         avg_train_loss = train_loss / len(train_loader)  # Calculation of avg_train_loss stays as it is, as we calculate total_train_loss without being scaled (in train_loss variable we accumulate the original loss of each train example)
 
         # Validation Loop
