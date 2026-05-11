@@ -47,7 +47,14 @@ class SummDPPLSTM(nn.Module):
         # --- EXACT 2016 THEANO LSTM INITIALIZATION ---
         for name, param in self.lstm.named_parameters():
             # Both weights AND biases were initialized uniformly between -0.02 and 0.02
-            nn.init.uniform_(param.data, -0.02, 0.02)
+            if 'weight' in name:
+                nn.init.uniform_(param.data, -0.02, 0.02)
+            elif 'bias_ih' in name:
+                # Theano's single bias vector initialized to [-0.02, 0.02]
+                nn.init.uniform_(param.data, -0.02, 0.02)
+            elif 'bias_hh' in name:
+                # Zero out PyTorch's secondary bias to prevent doubling the variance
+                nn.init.zeros_(param.data)
 
         # Phase 1: Importance Scoring (vsLSTM)
         # Input size is nx (original video) + 2*nh (forward and backward hidden states)
